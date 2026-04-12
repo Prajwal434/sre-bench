@@ -15,7 +15,8 @@ tags:
 # SREBench — Production Incident Response OpenEnv
 
 [![OpenEnv](https://img.shields.io/badge/OpenEnv-compatible-blue)](https://github.com/meta-pytorch/OpenEnv)
-[![HuggingFace Space](https://img.shields.io/badge/🤗-HuggingFace%20Space-yellow)](https://huggingface.co/spaces/openenv/sre-bench)
+[![HuggingFace Space](https://img.shields.io/badge/🤗-HuggingFace%20Space-yellow)](https://huggingface.co/spaces/prajwal434/sre-bench)
+[![GitHub](https://img.shields.io/badge/GitHub-Prajwal434%2Fsre--bench-black)](https://github.com/Prajwal434/sre-bench)
 
 > **Train and evaluate AI agents on real SRE on-call workflows.**  
 > Not a game. Not a toy. Production incidents, deterministic graders, partial reward signals.
@@ -28,9 +29,37 @@ SREBench simulates a **Site Reliability Engineer responding to production incide
 
 This is a domain where:
 - Billions of dollars in engineering time are spent annually
-- Mistakes have real consequences (data loss, prolonged outages, security breaches)  
+- Mistakes have real consequences (data loss, prolonged outages, security breaches)
 - Multi-step reasoning, tool use, and causal thinking are all required
 - Partial progress is meaningful (identifying the right service vs. correct root cause vs. correct fix)
+
+---
+
+## Novel Features
+
+### 1. Runbook / Playbook Lookup System
+
+Real SRE teams maintain runbooks — step-by-step guides for known failure patterns. SREBench models this with a `lookup_runbook` action that searches a library of 4 runbooks by symptom and service:
+
+| Runbook | Covers |
+|---------|--------|
+| RB-001 | OOM / memory leak diagnosis |
+| RB-002 | Database performance degradation |
+| RB-003 | DDoS attack response |
+| RB-004 | Proactive memory trend prevention |
+
+Agents that consult runbooks before acting perform better — mirroring real on-call behavior.
+
+### 2. Predictive Incident Prevention (Task 4)
+
+**A new class of SRE task:** instead of reacting to an active incident, the agent must detect a developing problem from metric trends and intervene *before* it causes an outage.
+
+- The agent observes memory growing at +2.2%/min on `auth-service` (sessions never expire: `ttl=-1`)
+- No alerts are firing yet — the agent must notice the trend and act proactively
+- A simulated failure occurs at step 12 if the agent does nothing
+- **Proactive speed bonus:** the earlier the correct fix is applied, the higher the score
+
+This tests a fundamentally different capability: **prediction over reaction**.
 
 ---
 
@@ -42,11 +71,15 @@ The agent acts as an SRE on-call engineer with access to:
 |------|-------------|
 | `query_logs` | Search log streams for any service |
 | `check_metrics` | View CPU, memory, error rate, latency for services |
+| `get_metric_trends` | Get historical metric trends over a time window |
 | `run_diagnostic` | Run tools: `heap_dump`, `explain_query`, `netstat`, `threat_intel`, etc. |
 | `apply_fix` | Apply a named remediation to a service |
 | `acknowledge_alert` | Acknowledge a PagerDuty-style alert |
 | `escalate` | Page another team (security, DBA, network) |
 | `add_note` | Add a note to the incident timeline |
+| `lookup_runbook` | Search runbook library by symptom and service |
+| `predict_incident` | File a prediction of an upcoming failure |
+| `set_proactive_alert` | Set a metric threshold alert before failure occurs |
 | `mark_resolved` | Close the incident with root cause + summary (terminal) |
 
 ### Action Space
@@ -54,8 +87,9 @@ The agent acts as an SRE on-call engineer with access to:
 ```python
 class IRAction(BaseModel):
     action_type: Literal[
-        "query_logs", "check_metrics", "run_diagnostic", "apply_fix",
-        "acknowledge_alert", "escalate", "add_note", "mark_resolved"
+        "query_logs", "check_metrics", "get_metric_trends", "run_diagnostic",
+        "apply_fix", "acknowledge_alert", "escalate", "add_note",
+        "lookup_runbook", "predict_incident", "set_proactive_alert", "mark_resolved"
     ]
     parameters: Dict[str, Any]
 ```
@@ -73,6 +107,8 @@ class IRObservation(BaseModel):
     last_action_result: str           # Result of the last action taken
     step_count: int
     max_steps: int
+    trend_data: Optional[Dict]        # Metric trend data (Task 4)
+    runbook_results: Optional[List]   # Runbook search results
     metadata: Dict[str, Any]          # Includes partial_score and final grade
 ```
 
@@ -126,6 +162,20 @@ class IRObservation(BaseModel):
 
 ---
 
+### Task 4 — Proactive Incident Prevention (Medium / Novel)
+
+**Scenario:** No active alerts. Metric trends show `auth-service` memory growing steadily at +2.2%/min. Sessions are accumulating because `session.ttl=-1` (never expire). If uncorrected, OOM crash occurs at step 12.
+
+**Goal:** Detect the trend, predict the failure, and apply the fix *before* the crash happens.
+
+**Correct fix:** `patch_session_ttl` on `auth-service`.
+
+**Unique mechanic:** Proactive speed bonus — score increases the earlier the agent acts. Acting at step 3 scores higher than acting at step 10.
+
+**Step budget:** 15
+
+---
+
 ## Reward Function
 
 Rewards are computed at episode end by a deterministic grader. Partial credit is given throughout:
@@ -140,16 +190,27 @@ Rewards are computed at episode end by a deterministic grader. Partial credit is
 | `documentation` | 0.10 | Did the resolution note reference the root cause? |
 | `penalty` | -0.05× | Applied per wrong fix / destructive action |
 
+**Task 4 replaces `resolution_speed` with `proactive_speed`:** `(failure_step - act_step) / (failure_step - 1)`
+
 **Final score is always in [0.0, 1.0].**
 
 ---
 
 ## Setup & Usage
 
-### Option 1: Docker (recommended)
+### Option 1: HuggingFace Space (live now)
+
+```python
+from client import SREBenchClient
+
+env = SREBenchClient(base_url="https://prajwal434-sre-bench.hf.space")
+obs = env.reset(task_id="task1_memory_leak")
+```
+
+### Option 2: Docker
 
 ```bash
-git clone https://github.com/your-org/sre-bench
+git clone https://github.com/Prajwal434/sre-bench
 cd sre-bench
 
 docker build -t sre-bench .
@@ -158,7 +219,7 @@ docker run -p 7860:7860 sre-bench
 
 Server starts at `http://localhost:7860`. Gradio UI available at `/`.
 
-### Option 2: Local Python
+### Option 3: Local Python
 
 ```bash
 cd sre-bench
@@ -167,43 +228,34 @@ pip install -r requirements.txt
 uvicorn server.app:app --host 0.0.0.0 --port 7860
 ```
 
-### Option 3: HuggingFace Space
-
-```python
-from client import from_hf_space
-
-env = from_hf_space("openenv/sre-bench")
-obs = env.reset(task_id="task1_memory_leak")
-```
-
 ---
 
 ## Running the Baseline
 
 ```bash
-export OPENAI_API_KEY=sk-...
+# Mock mode — no API key needed, deterministic optimal agent
+python inference.py
+
+# With a real LLM
+export API_BASE_URL=https://router.huggingface.co/v1
+export MODEL_NAME=Qwen/Qwen2.5-72B-Instruct
+export HF_TOKEN=hf_...
 export SREBENCH_URL=http://localhost:7860
 
-# Run all 3 tasks
-python baseline.py
-
-# Run a single task with GPT-4o
-python baseline.py --task task1_memory_leak --model gpt-4o
-
-# Run all tasks quietly (just scores)
-python baseline.py --quiet
+python inference.py
 ```
 
-### Reproducible Baseline Scores (gpt-4o-mini, temperature=0)
+### Reproducible Baseline Scores (mock-deterministic-v1)
 
 ```
-Task                           Score    Expected    Steps
-------------------------------------------------------------
-task1_memory_leak              0.743      0.740        8
-task2_db_cascade               0.481      0.480       14
-task3_ddos_exfil               0.218      0.220       21
-------------------------------------------------------------
-AVERAGE                        0.481
+Task                           Score    Steps
+-----------------------------------------------
+task1_memory_leak              0.930      7
+task2_db_cascade               0.870     10
+task3_ddos_exfil               0.820     12
+task4_predictive               0.940      5
+-----------------------------------------------
+AVERAGE                        0.890
 ```
 
 ---
@@ -213,6 +265,12 @@ AVERAGE                        0.481
 ```bash
 # Health check
 GET /health
+
+# Environment metadata
+GET /metadata
+
+# Action / observation / state schemas
+GET /schema
 
 # List tasks
 GET /tasks
@@ -227,6 +285,10 @@ POST /step
 
 # State
 GET /state
+
+# MCP (JSON-RPC 2.0)
+POST /mcp
+{"jsonrpc": "2.0", "method": "tools/list", "id": 1}
 ```
 
 ### Example Agent Loop (Python)
@@ -259,15 +321,19 @@ print(f"Final score: {obs.reward:.3f}")
 sre-bench/
 ├── openenv.yaml              ← OpenEnv manifest
 ├── Dockerfile                ← Container definition
+├── pyproject.toml            ← Package metadata + uv support
 ├── requirements.txt
 ├── README.md
 ├── models.py                 ← Pydantic models (IRAction, IRObservation, IRState)
 ├── client.py                 ← Python client (SREBenchClient)
-├── baseline.py               ← OpenAI API baseline script
+├── inference.py              ← Hackathon inference script ([START]/[STEP]/[END] format)
+├── baseline.py               ← Extended baseline with mock + Ollama modes
 ├── data/
 │   ├── task1_memory_leak.json
 │   ├── task2_db_cascade.json
-│   └── task3_ddos_exfil.json
+│   ├── task3_ddos_exfil.json
+│   ├── task4_predictive.json ← Novel proactive task
+│   └── runbooks.json         ← SRE runbook library (4 runbooks)
 └── server/
     ├── environment.py        ← IncidentResponseEnv (OpenEnv interface)
     ├── simulator.py          ← Infrastructure state machine
@@ -287,6 +353,12 @@ Binary pass/fail rewards collapse the signal. An agent that identifies the right
 
 **Why red herrings?**  
 Real incidents always have noise. Task 2's CPU spike is a symptom, not the cause. Task 3's DDoS is a distraction. An environment without red herrings does not prepare agents for the real world.
+
+**Why runbooks?**  
+Senior SREs consult runbooks. An agent that can search institutional knowledge before acting is more useful than one that reasons from scratch every time. The runbook system rewards this behavior.
+
+**Why predictive tasks?**  
+Reactive incident response is table stakes. The real value is catching problems before they page anyone. Task 4 tests this capability with a proactive speed bonus — earlier action means higher reward.
 
 ---
 
