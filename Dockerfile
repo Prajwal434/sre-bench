@@ -28,8 +28,8 @@ USER appuser
 #   MODEL_NAME    – Model identifier for inference
 #   HF_TOKEN      – HuggingFace / API key
 # ---------------------------------------------------------------------------
-ENV API_BASE_URL=""
-ENV MODEL_NAME=""
+ENV API_BASE_URL="https://router.huggingface.co/v1"
+ENV MODEL_NAME="Qwen/Qwen2.5-72B-Instruct"
 ENV HF_TOKEN=""
 ENV SREBENCH_URL="http://localhost:7860"
 
