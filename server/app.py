@@ -75,7 +75,69 @@ class StepRequest(BaseModel):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "env": "sre-bench"}
+    return {"status": "healthy", "env": "sre-bench"}
+
+
+@app.get("/metadata")
+def metadata():
+    return {
+        "name": "sre-bench",
+        "description": (
+            "An OpenEnv environment simulating SRE on-call incident response. "
+            "Agents diagnose production incidents (OOM crashes, database cascades, "
+            "DDoS + data exfiltration) across 3 difficulty levels and receive "
+            "reward signals for correct diagnosis, effective remediation, "
+            "appropriate escalation, and documentation quality."
+        ),
+        "version": "1.0.0",
+        "tasks": VALID_TASKS,
+    }
+
+
+@app.get("/schema")
+def schema():
+    return {
+        "action": IRAction.model_json_schema(),
+        "observation": IRObservation.model_json_schema(),
+        "state": IRState.model_json_schema(),
+    }
+
+
+@app.post("/mcp")
+async def mcp_endpoint(request: dict):
+    """Minimal JSON-RPC 2.0 endpoint for MCP compatibility."""
+    method = request.get("method", "")
+    req_id = request.get("id", 1)
+
+    if method == "initialize":
+        return {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "sre-bench", "version": "1.0.0"},
+            },
+        }
+    elif method == "tools/list":
+        return {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {
+                "tools": [
+                    {"name": t, "description": f"SREBench action: {t}", "inputSchema": {"type": "object"}}
+                    for t in ["query_logs", "check_metrics", "run_diagnostic", "apply_fix",
+                              "acknowledge_alert", "escalate", "add_note", "mark_resolved",
+                              "get_metric_trends", "lookup_runbook", "predict_incident", "set_proactive_alert"]
+                ]
+            },
+        }
+    else:
+        return {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "error": {"code": -32601, "message": f"Method not found: {method}"},
+        }
 
 
 @app.post("/reset", response_model=IRObservation)
