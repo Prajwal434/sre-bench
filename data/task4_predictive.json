@@ -1,0 +1,149 @@
+{
+  "task_id": "task4_predictive",
+  "difficulty": "medium",
+  "title": "Proactive Incident Prevention – Memory Leak Early Warning",
+  "description": "No alerts have fired yet. But metric trends show the auth-service memory is climbing steadily. Connection pool usage is slowly creeping up on user-db. If left unchecked, auth-service will OOM in approximately 25 minutes. Your job: detect the trend, diagnose the root cause, apply a fix, and prevent the incident BEFORE it becomes a P1 alert. The earlier you act, the higher your score.",
+  "max_steps": 15,
+  "proactive_mode": true,
+  "failure_at_step": 12,
+  "initial_alerts": [],
+  "initial_metrics": [
+    {
+      "service": "auth-service",
+      "cpu_pct": 42.0,
+      "memory_pct": 71.3,
+      "error_rate": 0.4,
+      "p99_latency_ms": 180.0,
+      "requests_per_sec": 310.0
+    },
+    {
+      "service": "user-db",
+      "cpu_pct": 28.0,
+      "memory_pct": 55.0,
+      "error_rate": 0.1,
+      "p99_latency_ms": 14.0,
+      "requests_per_sec": 890.0
+    },
+    {
+      "service": "api-gateway",
+      "cpu_pct": 25.0,
+      "memory_pct": 40.0,
+      "error_rate": 0.2,
+      "p99_latency_ms": 95.0,
+      "requests_per_sec": 1100.0
+    },
+    {
+      "service": "session-cache",
+      "cpu_pct": 18.0,
+      "memory_pct": 82.4,
+      "error_rate": 0.0,
+      "p99_latency_ms": 2.0,
+      "requests_per_sec": 4200.0
+    }
+  ],
+  "metric_trends": {
+    "auth-service": {
+      "memory_pct": {
+        "values": [58.1, 60.4, 62.8, 65.1, 67.3, 69.8, 71.3],
+        "timestamps_ago_minutes": [30, 25, 20, 15, 10, 5, 0],
+        "rate_per_minute": 2.2,
+        "projected_critical_minutes": 13,
+        "trend": "INCREASING",
+        "note": "Memory increasing ~2.2%/min consistently for 30 minutes. At this rate, will hit 95% (OOM threshold) in ~13 minutes."
+      },
+      "error_rate": {
+        "values": [0.1, 0.1, 0.2, 0.2, 0.3, 0.4, 0.4],
+        "timestamps_ago_minutes": [30, 25, 20, 15, 10, 5, 0],
+        "rate_per_minute": 0.01,
+        "trend": "SLOWLY_INCREASING",
+        "note": "Error rate slowly rising – consistent with session lookup failures as cache fills."
+      },
+      "p99_latency_ms": {
+        "values": [95.0, 100.0, 110.0, 130.0, 155.0, 170.0, 180.0],
+        "timestamps_ago_minutes": [30, 25, 20, 15, 10, 5, 0],
+        "rate_per_minute": 2.8,
+        "trend": "INCREASING",
+        "note": "P99 latency creeping up as GC pressure increases with memory usage."
+      }
+    },
+    "session-cache": {
+      "memory_pct": {
+        "values": [74.1, 75.3, 76.8, 78.2, 79.8, 81.1, 82.4],
+        "timestamps_ago_minutes": [30, 25, 20, 15, 10, 5, 0],
+        "rate_per_minute": 0.28,
+        "trend": "INCREASING",
+        "note": "session-cache memory also rising. Sessions are not being evicted. TTL eviction may be misconfigured or disabled."
+      }
+    },
+    "user-db": {
+      "requests_per_sec": {
+        "values": [620, 670, 710, 760, 820, 860, 890],
+        "timestamps_ago_minutes": [30, 25, 20, 15, 10, 5, 0],
+        "rate_per_minute": 9.0,
+        "trend": "INCREASING",
+        "note": "More DB reads – auth-service falling back to DB for session lookups as cache fills. Upstream effect of cache saturation."
+      }
+    }
+  },
+  "log_database": {
+    "auth-service": [
+      {"timestamp": "2024-04-01T08:30:00Z", "service": "auth-service", "level": "WARN", "message": "Session cache hit rate: 94.2% (normal: 99.8%) – cache may be approaching capacity"},
+      {"timestamp": "2024-04-01T08:25:00Z", "service": "auth-service", "level": "WARN", "message": "Session cache hit rate: 96.1%"},
+      {"timestamp": "2024-04-01T08:20:00Z", "service": "auth-service", "level": "WARN", "message": "Heap usage trending upward. Current: 71.3%. GC overhead: 12% (elevated)."},
+      {"timestamp": "2024-04-01T08:15:00Z", "service": "auth-service", "level": "INFO", "message": "SessionStore size: 8,847,293 entries. MaxSize: 10,000,000. At 88.5% capacity."},
+      {"timestamp": "2024-04-01T08:10:00Z", "service": "auth-service", "level": "INFO", "message": "SessionStore TTL eviction: DISABLED (config: session.ttl=-1). Sessions accumulating indefinitely."},
+      {"timestamp": "2024-04-01T08:00:00Z", "service": "auth-service", "level": "INFO", "message": "auth-service v3.2.1 started. SessionStore initialized: maxSize=10000000, ttl=-1 (no expiry)"}
+    ],
+    "session-cache": [
+      {"timestamp": "2024-04-01T08:28:00Z", "service": "session-cache", "level": "WARN", "message": "Redis memory usage: 82.4% of 2GB limit. Eviction policy: noeviction (will return OOM error when full)."},
+      {"timestamp": "2024-04-01T08:20:00Z", "service": "session-cache", "level": "WARN", "message": "Redis memory usage: 79.8%. Eviction policy: noeviction. At current growth rate, will be full in ~14 minutes."},
+      {"timestamp": "2024-04-01T08:10:00Z", "service": "session-cache", "level": "INFO", "message": "Redis keyspace: db0 keys=4,200,000, avg_ttl=0 (no TTL set on keys). Sessions never expire."}
+    ],
+    "user-db": [
+      {"timestamp": "2024-04-01T08:29:00Z", "service": "user-db", "level": "INFO", "message": "Increased SELECT volume on sessions table from auth-service. Connections: 89/200."},
+      {"timestamp": "2024-04-01T08:20:00Z", "service": "user-db", "level": "INFO", "message": "All queries nominal. Cache fallback reads increasing."}
+    ]
+  },
+  "diagnostic_results": {
+    "heap_dump auth-service": "Heap analysis: SessionStore object holds 8,847,293 session entries. TTL=-1 means sessions never expire. Oldest session: 72 hours old. At current creation rate (3,100 new sessions/min) and no eviction, heap will be exhausted in ~13 minutes. Root cause: session.ttl=-1 in auth-service config.",
+    "thread_dump auth-service": "GC threads consuming 12% CPU. Main threads: 145 RUNNABLE (handling requests), 8 WAITING on SessionStore.lookup(). No deadlocks. Memory pressure is primary concern.",
+    "redis_info session-cache": "redis_version: 7.0.5\nused_memory_human: 1.65G\nmaxmemory_human: 2.00G\nmaxmemory_policy: noeviction\nkeyspace: db0 keys=4,200,112 expires=0\n\nIMPORTANT: expires=0 means NO keys have a TTL set. Keys accumulate forever. When maxmemory is hit with noeviction policy, Redis will return OOM errors to all clients.",
+    "ping session-cache": "session-cache is healthy and responding. Memory usage: 82.4%.",
+    "config_check auth-service": "auth-service application.yml:\n  session.store: redis\n  session.ttl: -1  # BUG: should be 3600 (1 hour)\n  session.maxSize: 10000000\n  redis.host: session-cache:6379\n\nThis config means all sessions created since deployment persist forever in both Redis and the in-process SessionStore."
+  },
+  "valid_fixes": {
+    "patch_session_ttl": {
+      "service": "auth-service",
+      "description": "Hot-patch session.ttl to 3600 seconds (1 hour) and restart auth-service",
+      "partial_credit": 1.0,
+      "note": "session.ttl patched to 3600s. auth-service restarting. Redis TTL set on all existing keys. Memory usage: 71.3% → stabilising. Old sessions will expire over next 60 minutes. Root cause resolved."
+    },
+    "flush_expired_sessions": {
+      "service": "session-cache",
+      "description": "Flush Redis session cache (emergency – all users will need to re-login)",
+      "partial_credit": 0.5,
+      "note": "Redis FLUSHDB executed. Memory: 82.4% → 2.1%. All users logged out (session invalidation). auth-service memory pressure relieved. WARNING: root cause (ttl=-1) not fixed, cache will refill in ~45 minutes. Patch session.ttl to prevent recurrence."
+    },
+    "set_redis_eviction_policy": {
+      "service": "session-cache",
+      "description": "Change Redis maxmemory-policy from noeviction to allkeys-lru",
+      "partial_credit": 0.6,
+      "note": "Redis eviction policy changed to allkeys-lru. Redis will now evict least-recently-used keys when full. Prevents hard OOM error. Does not fix root cause (ttl=-1) – sessions still accumulate but oldest get evicted. Partial fix."
+    },
+    "restart_auth_service": {
+      "service": "auth-service",
+      "description": "Restart auth-service to clear in-process SessionStore",
+      "partial_credit": 0.1,
+      "note": "auth-service restarted. In-process SessionStore cleared. Memory: 71.3% → 18%. However: Redis still at 82.4% with noeviction. Sessions will reload from Redis. Memory will climb again in ~15 minutes. Root cause unfixed."
+    }
+  },
+  "grader_criteria": {
+    "target_service": "auth-service",
+    "root_cause_keywords": ["ttl", "session", "expire", "eviction", "noeviction", "accumulate", "session.ttl=-1", "never expire"],
+    "correct_fix": "patch_session_ttl",
+    "acceptable_fix": "set_redis_eviction_policy",
+    "needs_escalation": false,
+    "proactive_failure_step": 12,
+    "resolution_required": true
+  }
+}

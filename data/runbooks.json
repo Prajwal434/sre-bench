@@ -1,0 +1,132 @@
+{
+  "runbooks": [
+    {
+      "runbook_id": "RB-001",
+      "title": "Memory Exhaustion / OOMKilled",
+      "version": "2.1",
+      "last_updated": "2024-01-10",
+      "symptoms": ["OOMKilled", "OutOfMemoryError", "heap space", "memory", "MEM >90%"],
+      "applicable_services": ["payment-service", "order-service", "inventory-service"],
+      "steps": [
+        "Step 1: Run check_metrics to identify which service has MEM >90%.",
+        "Step 2: Run query_logs on the affected service filtering for 'ERROR' or 'OutOfMemory'.",
+        "Step 3: Run run_diagnostic with tool=heap_dump on the affected service to identify what is consuming memory.",
+        "Step 4: If heap dump shows unbounded cache → apply_fix fix_type=patch_cache_config.",
+        "Step 5: If heap dump shows memory limit is just too low → apply_fix fix_type=increase_memory_limit (temporary workaround – schedule proper fix).",
+        "Step 6: Acknowledge related alerts.",
+        "Step 7: Monitor for 5 minutes to confirm memory stabilises.",
+        "Step 8: mark_resolved with root cause referencing heap dump findings."
+      ],
+      "common_root_causes": [
+        "Unbounded in-memory cache (no maxSize or TTL configured)",
+        "Memory leak in request handling (objects not GC'd)",
+        "Memory limit set too low for current traffic volume",
+        "Sudden traffic spike exhausting normal allocation"
+      ],
+      "do_not": [
+        "Do NOT increase memory limit as a first response without diagnosing root cause.",
+        "Do NOT restart the service without capturing a heap dump first – you will lose the evidence.",
+        "Do NOT scale horizontally if the issue is a memory leak – you will OOM all replicas."
+      ],
+      "escalate_to": "platform-team",
+      "p_level": "P1"
+    },
+    {
+      "runbook_id": "RB-002",
+      "title": "Database Performance Degradation / Slow Queries",
+      "version": "1.8",
+      "last_updated": "2024-01-05",
+      "symptoms": ["DB query timeout", "Seq Scan", "slow query", "p99 latency >10000ms", "connection pool exhausted", "postgres"],
+      "applicable_services": ["postgres-primary", "postgres-replica", "mysql-primary"],
+      "steps": [
+        "Step 1: Run check_metrics – look for DB service CPU >80% or high p99 latency.",
+        "Step 2: Run query_logs on the database service filtering for 'slow query' or 'timeout'.",
+        "Step 3: Run run_diagnostic with tool=explain_query on the database to see query plans.",
+        "Step 4: Run run_diagnostic with tool=check_migrations to check for failed or stuck migrations.",
+        "Step 5: If INVALID index found → apply_fix fix_type=reindex_invalid_index (preferred) or drop_invalid_index (emergency).",
+        "Step 6: If missing index → create index (schedule during maintenance window).",
+        "Step 7: If connection pool exhausted → investigate which upstream service is holding connections.",
+        "Step 8: Do NOT restart the DB without DBA approval – data loss risk.",
+        "Step 9: mark_resolved with root cause referencing query plan or migration status."
+      ],
+      "common_root_causes": [
+        "Failed CONCURRENT index build leaving INVALID index (falls back to Seq Scan)",
+        "Missing index on high-cardinality column",
+        "N+1 query pattern introduced in recent deployment",
+        "Lock contention from long-running transaction",
+        "Connection pool exhaustion from upstream scaling"
+      ],
+      "do_not": [
+        "Do NOT restart postgres without DBA approval.",
+        "Do NOT scale upstream services horizontally during DB saturation – it makes connection exhaustion worse.",
+        "Do NOT DROP an index without understanding why it exists."
+      ],
+      "escalate_to": "database-team",
+      "p_level": "P1"
+    },
+    {
+      "runbook_id": "RB-003",
+      "title": "DDoS / Volumetric Attack on API Endpoints",
+      "version": "3.0",
+      "last_updated": "2024-03-01",
+      "symptoms": ["req/s spike >10x baseline", "WAF alert", "credential stuffing", "IP rotation", "rate limit exceeded"],
+      "applicable_services": ["api-gateway", "auth-service", "frontend"],
+      "steps": [
+        "Step 1: Run check_metrics to confirm traffic spike and identify affected endpoints.",
+        "Step 2: Run query_logs on api-gateway filtering for 'WAF' or 'rate limit'.",
+        "Step 3: Run run_diagnostic with tool=waf_rules to see current protection rules.",
+        "Step 4: Apply apply_fix fix_type=rate_limit_auth_endpoint to throttle the attacking IPs.",
+        "Step 5: Run run_diagnostic with tool=network_capture to identify source IP ranges.",
+        "Step 6: Apply apply_fix fix_type=block_tor_subnet if attack originates from known bad IP ranges.",
+        "Step 7: CRITICAL – Check ALL other alerts simultaneously. DDoS is often a distraction for a secondary attack.",
+        "Step 8: Run query_logs on internal services (data-pipeline, user-db) for anomalous activity.",
+        "Step 9: If secondary attack detected → escalate to security team IMMEDIATELY.",
+        "Step 10: Preserve forensic evidence before any cleanup.",
+        "Step 11: mark_resolved – document both the attack vector AND any secondary activity found."
+      ],
+      "common_root_causes": [
+        "Credential stuffing botnet (rotating IPs, user-agent spoofing)",
+        "Competitor scraping",
+        "DDoS-as-distraction for data exfiltration (HIGH RISK – check secondary alerts)"
+      ],
+      "do_not": [
+        "Do NOT focus exclusively on the DDoS without investigating other simultaneous alerts.",
+        "Do NOT clean up logs or network captures before forensics are preserved.",
+        "Do NOT block all traffic to the endpoint – legitimate users will be impacted."
+      ],
+      "escalate_to": "security-team",
+      "p_level": "P0"
+    },
+    {
+      "runbook_id": "RB-004",
+      "title": "Gradual Memory / CPU Trend Toward Failure (Proactive Prevention)",
+      "version": "1.0",
+      "last_updated": "2024-03-15",
+      "symptoms": ["memory increasing >2%/min", "error rate slowly rising", "p99 latency creeping up", "no active alert yet"],
+      "applicable_services": ["any"],
+      "steps": [
+        "Step 1: Run get_metric_trends on the suspect service to confirm the trend (window_minutes=30 recommended).",
+        "Step 2: Calculate projected time-to-failure: current_value + (rate_per_minute * remaining_minutes).",
+        "Step 3: Run query_logs to look for early warning signs (WARN level entries, increasing error counts).",
+        "Step 4: Run run_diagnostic to understand root cause before it becomes critical.",
+        "Step 5: File a prediction using predict_incident with your predicted failure type and confidence.",
+        "Step 6: Apply a proactive fix BEFORE the threshold is breached.",
+        "Step 7: Set a proactive alert using set_proactive_alert so the team is notified if trend continues.",
+        "Step 8: mark_resolved documenting the trend, predicted failure, and preventive action taken."
+      ],
+      "common_root_causes": [
+        "Memory leak slowly accumulating (cache, connection pool, event listeners)",
+        "Traffic growth approaching capacity limit",
+        "Slow-burning query plan regression after index statistics update",
+        "Certificate/token approaching expiry causing increasing auth failures"
+      ],
+      "do_not": [
+        "Do NOT wait for an alert to fire if trends clearly indicate imminent failure.",
+        "Do NOT apply fixes without diagnosing root cause first – proactive does not mean blind.",
+        "Do NOT ignore low-severity trends during busy periods."
+      ],
+      "escalate_to": "platform-team",
+      "p_level": "P2 (proactive)"
+    }
+  ]
+}

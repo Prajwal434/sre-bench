@@ -1,0 +1,72 @@
+spec_version: 1
+name: sre-bench
+type: space
+runtime: fastapi
+app: server.app:app
+port: 7860
+
+metadata:
+  title: "SREBench – Production Incident Response"
+  description: >
+    An OpenEnv environment simulating SRE on-call incident response.
+    Agents diagnose production incidents (OOM crashes, database cascades,
+    DDoS + data exfiltration) across 3 difficulty levels and receive
+    reward signals for correct diagnosis, effective remediation,
+    appropriate escalation, and documentation quality.
+  tags:
+    - openenv
+    - sre
+    - incident-response
+    - real-world
+    - agent-evaluation
+  tasks:
+    - id: task1_memory_leak
+      difficulty: easy
+      title: "Memory Leak OOM – Payment Service"
+      max_steps: 15
+    - id: task2_db_cascade
+      difficulty: medium
+      title: "Database Cascade Failure – Slow Query Avalanche"
+      max_steps: 20
+    - id: task3_ddos_exfil
+      difficulty: hard
+      title: "DDoS Attack with Suspected Data Exfiltration"
+      max_steps: 25
+    - id: task4_predictive
+      difficulty: medium
+      title: "Proactive Incident Prevention – Memory Trend Early Warning"
+      max_steps: 15
+      proactive: true
+  action_space:
+    type: categorical
+    values:
+      - query_logs
+      - check_metrics
+      - get_metric_trends
+      - run_diagnostic
+      - apply_fix
+      - acknowledge_alert
+      - escalate
+      - add_note
+      - lookup_runbook
+      - predict_incident
+      - set_proactive_alert
+      - mark_resolved
+  observation_space:
+    active_alerts: "List[Alert] – current PagerDuty-style alerts"
+    log_results: "List[LogEntry] – results of query_logs actions"
+    metrics: "List[ServiceMetric] – per-service CPU/memory/latency/error_rate"
+    incident_timeline: "List[str] – recent action history"
+    last_action_result: "str – human-readable result of last action"
+    step_count: "int – steps taken this episode"
+    max_steps: "int – episode step budget"
+  reward:
+    range: [0.0, 1.0]
+    type: episodic_with_partial_signals
+    components:
+      service_identification: 0.10
+      root_cause_diagnosis: 0.25
+      fix_applied: 0.30
+      resolution_speed: 0.15
+      escalation: 0.10
+      documentation: 0.10

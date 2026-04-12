@@ -1,0 +1,182 @@
+{
+  "task_id": "task3_ddos_exfil",
+  "difficulty": "hard",
+  "title": "DDoS Attack with Suspected Data Exfiltration",
+  "description": "Abnormal traffic is flooding auth endpoints while simultaneously a background process is making unusual outbound connections. You must: rate-limit the attack, investigate potential data exfiltration, escalate to the security team, and preserve forensic evidence – all while keeping the service available.",
+  "max_steps": 25,
+  "initial_alerts": [
+    {
+      "alert_id": "ALT-201",
+      "severity": "critical",
+      "service": "auth-service",
+      "message": "auth-service: 48,000 req/s on /api/auth/login (normal: 200 req/s). Possible credential stuffing or DDoS.",
+      "timestamp": "2024-03-20T03:22:00Z",
+      "acknowledged": false
+    },
+    {
+      "alert_id": "ALT-202",
+      "severity": "critical",
+      "service": "api-gateway",
+      "message": "api-gateway: WAF detected 312 distinct source IPs hammering /api/auth/login with rotating user-agents",
+      "timestamp": "2024-03-20T03:22:05Z",
+      "acknowledged": false
+    },
+    {
+      "alert_id": "ALT-203",
+      "severity": "warning",
+      "service": "auth-service",
+      "message": "auth-service: CPU at 94%, p99 latency 8,200ms. Legitimate users experiencing login failures.",
+      "timestamp": "2024-03-20T03:22:10Z",
+      "acknowledged": false
+    },
+    {
+      "alert_id": "ALT-204",
+      "severity": "warning",
+      "service": "user-db",
+      "message": "user-db: Unusual SELECT volume – 3x baseline reads on users table in last 5 minutes",
+      "timestamp": "2024-03-20T03:21:45Z",
+      "acknowledged": false
+    },
+    {
+      "alert_id": "ALT-205",
+      "severity": "info",
+      "service": "data-pipeline",
+      "message": "data-pipeline: Outbound network egress spike – 2.4 GB transferred to 185.220.101.0/24 (Tor exit node range) in last 3 minutes",
+      "timestamp": "2024-03-20T03:21:30Z",
+      "acknowledged": false
+    }
+  ],
+  "initial_metrics": [
+    {
+      "service": "auth-service",
+      "cpu_pct": 94.0,
+      "memory_pct": 78.0,
+      "error_rate": 67.0,
+      "p99_latency_ms": 8200.0,
+      "requests_per_sec": 48000.0
+    },
+    {
+      "service": "api-gateway",
+      "cpu_pct": 88.0,
+      "memory_pct": 65.0,
+      "error_rate": 45.0,
+      "p99_latency_ms": 3400.0,
+      "requests_per_sec": 52000.0
+    },
+    {
+      "service": "user-db",
+      "cpu_pct": 71.0,
+      "memory_pct": 82.0,
+      "error_rate": 2.1,
+      "p99_latency_ms": 340.0,
+      "requests_per_sec": 8400.0
+    },
+    {
+      "service": "data-pipeline",
+      "cpu_pct": 45.0,
+      "memory_pct": 55.0,
+      "error_rate": 0.0,
+      "p99_latency_ms": 120.0,
+      "requests_per_sec": 12.0
+    },
+    {
+      "service": "frontend",
+      "cpu_pct": 55.0,
+      "memory_pct": 60.0,
+      "error_rate": 38.0,
+      "p99_latency_ms": 12000.0,
+      "requests_per_sec": 3200.0
+    }
+  ],
+  "log_database": {
+    "auth-service": [
+      {"timestamp": "2024-03-20T03:22:00Z", "service": "auth-service", "level": "ERROR", "message": "Rate limit exceeded for IP 185.220.101.14: 2847 requests in 60s on /api/auth/login"},
+      {"timestamp": "2024-03-20T03:22:00Z", "service": "auth-service", "level": "ERROR", "message": "Rate limit exceeded for IP 185.220.101.47: 2312 requests in 60s on /api/auth/login"},
+      {"timestamp": "2024-03-20T03:21:58Z", "service": "auth-service", "level": "WARN", "message": "Credential stuffing pattern detected: 847 unique usernames attempted from 185.220.101.0/24 subnet"},
+      {"timestamp": "2024-03-20T03:21:55Z", "service": "auth-service", "level": "WARN", "message": "auth-service: login success rate 0.8% (normal: 94%). Possible credential stuffing in progress."},
+      {"timestamp": "2024-03-20T03:21:50Z", "service": "auth-service", "level": "ERROR", "message": "DB connection pool saturating: 98/100 connections in use"}
+    ],
+    "api-gateway": [
+      {"timestamp": "2024-03-20T03:22:05Z", "service": "api-gateway", "level": "ERROR", "message": "WAF ALERT: Botnet signature match on 312 IPs. User-agent rotation: curl/7.x, python-requests/2.x, Mozilla/5.0 (rotating). Destination: /api/auth/login"},
+      {"timestamp": "2024-03-20T03:22:00Z", "service": "api-gateway", "level": "WARN", "message": "DDoS mitigation NOT active – no rate limit rule configured for /api/auth/login at IP-block level"},
+      {"timestamp": "2024-03-20T03:21:45Z", "service": "api-gateway", "level": "INFO", "message": "Legitimate traffic origin mix: 94% normal users, 6% flagged IPs in last 10 min"}
+    ],
+    "user-db": [
+      {"timestamp": "2024-03-20T03:22:00Z", "service": "user-db", "level": "WARN", "message": "Slow query: SELECT email, password_hash, pii_data FROM users LIMIT 100000 — executed by user: data_pipeline_svc (not auth-service)"},
+      {"timestamp": "2024-03-20T03:21:55Z", "service": "user-db", "level": "WARN", "message": "Bulk SELECT on users table: 847,293 rows returned in last 3 minutes from connection user=data_pipeline_svc"},
+      {"timestamp": "2024-03-20T03:21:45Z", "service": "user-db", "level": "INFO", "message": "Normal auth queries from auth-service: individual lookups by email (expected pattern)"}
+    ],
+    "data-pipeline": [
+      {"timestamp": "2024-03-20T03:21:50Z", "service": "data-pipeline", "level": "WARN", "message": "Unusual job triggered: export_users_full_v2 – not in scheduled job list. Job parameters: destination=s3://external-bucket-xf92k, include_pii=true"},
+      {"timestamp": "2024-03-20T03:21:35Z", "service": "data-pipeline", "level": "ERROR", "message": "Outbound connection to 185.220.101.0/24 (Tor exit node). Transferring 2.4GB. This IP range is flagged in threat intel."},
+      {"timestamp": "2024-03-20T03:21:30Z", "service": "data-pipeline", "level": "INFO", "message": "Job export_users_full_v2 started by API key: dpk_f8a2c... (key created 2024-03-20T03:18:00Z – 4 minutes ago)"}
+    ],
+    "auth-service-audit": [
+      {"timestamp": "2024-03-20T03:21:00Z", "service": "auth-service", "level": "INFO", "message": "Successful login: user=admin@company.com from IP 185.220.101.89 – ANOMALOUS (not a known admin IP)"},
+      {"timestamp": "2024-03-20T03:20:55Z", "service": "auth-service", "level": "INFO", "message": "API key dpk_f8a2c... created by admin@company.com – this key has data-pipeline write access"}
+    ]
+  },
+  "diagnostic_results": {
+    "netstat data-pipeline": "Active outbound connections: 185.220.101.14:443 (ESTABLISHED, 847MB sent), 185.220.101.47:443 (ESTABLISHED, 1.2GB sent), 185.220.101.89:443 (ESTABLISHED, 0.4GB sent). All Tor exit nodes.",
+    "threat_intel 185.220.101.0/24": "Threat intel: 185.220.101.0/24 is a known Tor exit node range. Associated with data exfiltration campaigns in 3 CVE reports (2023-2024). HIGH confidence malicious.",
+    "check_api_keys data-pipeline": "API key dpk_f8a2c... created 03:18 UTC by compromised admin account. Permissions: read:users (PII), write:pipeline-jobs, execute:exports. RECOMMENDATION: revoke immediately.",
+    "check_job_history data-pipeline": "Scheduled jobs: daily_analytics (04:00 UTC), weekly_report (Sunday 06:00 UTC). Job export_users_full_v2 is NOT a scheduled job – triggered via API.",
+    "waf_rules api-gateway": "Current WAF rules: SQL injection block, XSS block. No IP-based rate limiting on /api/auth/login. No subnet blocking rules active.",
+    "network_capture auth-service": "Packet sample: 48,247 req/s to /api/auth/login. Source IPs: 185.220.101.0/24 subnet (312 unique IPs). All requests include X-Forwarded-For headers suggesting botnet."
+  },
+  "valid_fixes": {
+    "rate_limit_auth_endpoint": {
+      "service": "api-gateway",
+      "description": "Apply IP-based rate limit: max 10 req/min per IP on /api/auth/login",
+      "partial_credit": 0.25,
+      "note": "Rate limit rule applied. Traffic on /api/auth/login: 48,000 req/s → 2,100 req/s. auth-service CPU: 94% → 31%. Legitimate users can now log in. Attack traffic reduced but not eliminated."
+    },
+    "block_tor_subnet": {
+      "service": "api-gateway",
+      "description": "Block entire 185.220.101.0/24 subnet at WAF level",
+      "partial_credit": 0.2,
+      "note": "Subnet 185.220.101.0/24 blocked at WAF. Attack traffic dropped 89%. Some legitimate Tor users also blocked – acceptable tradeoff during incident."
+    },
+    "revoke_api_key": {
+      "service": "data-pipeline",
+      "description": "Revoke compromised API key dpk_f8a2c... immediately",
+      "partial_credit": 0.2,
+      "note": "API key dpk_f8a2c... revoked. data-pipeline job export_users_full_v2 terminated. Outbound transfer stopped at 2.4GB. Forensic snapshot of transferred data logged."
+    },
+    "isolate_data_pipeline": {
+      "service": "data-pipeline",
+      "description": "Network-isolate data-pipeline service to stop active exfiltration",
+      "partial_credit": 0.15,
+      "note": "data-pipeline network access revoked. All outbound connections terminated. Active exfiltration stopped. Service offline until investigation complete."
+    },
+    "preserve_forensics": {
+      "service": "data-pipeline",
+      "description": "Capture network logs, job history, and API key audit trail before remediation",
+      "partial_credit": 0.1,
+      "note": "Forensic snapshot captured: network pcap (2.4GB sample), job logs, API key creation audit trail, user-db query logs. Evidence preserved for security team."
+    },
+    "escalate_security_team": {
+      "service": "all",
+      "description": "Page security team with full incident summary",
+      "partial_credit": 0.2,
+      "note": "Security team paged. Incident severity: P0. Security on-call responding. Handoff: compromised admin account, 2.4GB PII exfil to Tor nodes, DDoS as distraction."
+    },
+    "reset_admin_password": {
+      "service": "auth-service",
+      "description": "Force password reset for admin@company.com and invalidate all sessions",
+      "partial_credit": 0.1,
+      "note": "admin@company.com sessions invalidated, password reset forced. Attacker access via compromised account revoked."
+    }
+  },
+  "grader_criteria": {
+    "target_service": "multiple",
+    "attack_vector": "compromised_admin_account",
+    "root_cause_keywords": ["compromised", "admin", "API key", "exfiltration", "DDoS", "distraction", "Tor", "data-pipeline", "credential stuffing"],
+    "required_actions": ["rate_limit_auth_endpoint", "revoke_api_key", "reset_admin_password"],
+    "bonus_actions": ["block_tor_subnet", "preserve_forensics", "reset_admin_password", "isolate_data_pipeline"],
+    "needs_escalation": true,
+    "escalation_team": "security",
+    "resolution_required": true,
+    "understanding_required": "Agent must recognize DDoS is a distraction for exfiltration – both must be addressed"
+  }
+}

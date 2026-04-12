@@ -1,0 +1,99 @@
+{
+  "task_id": "task1_memory_leak",
+  "difficulty": "easy",
+  "title": "Memory Leak OOM – Payment Service",
+  "description": "The payment-service is crashing with OOM errors. Identify the root cause and apply the correct fix.",
+  "max_steps": 15,
+  "initial_alerts": [
+    {
+      "alert_id": "ALT-001",
+      "severity": "critical",
+      "service": "payment-service",
+      "message": "payment-service: Pod restarted 4 times in last 10 minutes (OOMKilled)",
+      "timestamp": "2024-01-15T14:32:00Z",
+      "acknowledged": false
+    },
+    {
+      "alert_id": "ALT-002",
+      "severity": "warning",
+      "service": "api-gateway",
+      "message": "api-gateway: Upstream payment-service returning 502 errors (12% error rate)",
+      "timestamp": "2024-01-15T14:33:00Z",
+      "acknowledged": false
+    }
+  ],
+  "initial_metrics": [
+    {
+      "service": "payment-service",
+      "cpu_pct": 45.0,
+      "memory_pct": 98.7,
+      "error_rate": 8.4,
+      "p99_latency_ms": 12000.0,
+      "requests_per_sec": 120.0
+    },
+    {
+      "service": "api-gateway",
+      "cpu_pct": 30.0,
+      "memory_pct": 55.0,
+      "error_rate": 14.2,
+      "p99_latency_ms": 800.0,
+      "requests_per_sec": 980.0
+    },
+    {
+      "service": "database",
+      "cpu_pct": 22.0,
+      "memory_pct": 60.0,
+      "error_rate": 0.1,
+      "p99_latency_ms": 12.0,
+      "requests_per_sec": 320.0
+    }
+  ],
+  "log_database": {
+    "payment-service": [
+      {"timestamp": "2024-01-15T14:31:55Z", "service": "payment-service", "level": "ERROR", "message": "java.lang.OutOfMemoryError: Java heap space at com.payments.cache.TransactionCache.put(TransactionCache.java:142)"},
+      {"timestamp": "2024-01-15T14:31:54Z", "service": "payment-service", "level": "ERROR", "message": "java.lang.OutOfMemoryError: Java heap space at com.payments.cache.TransactionCache.put(TransactionCache.java:142)"},
+      {"timestamp": "2024-01-15T14:31:50Z", "service": "payment-service", "level": "WARN", "message": "TransactionCache size exceeded 2M entries – eviction policy may not be working"},
+      {"timestamp": "2024-01-15T14:30:00Z", "service": "payment-service", "level": "WARN", "message": "Heap usage at 85% – approaching limit"},
+      {"timestamp": "2024-01-15T14:28:00Z", "service": "payment-service", "level": "INFO", "message": "TransactionCache initialized with maxSize=-1 (unbounded)"}
+    ],
+    "api-gateway": [
+      {"timestamp": "2024-01-15T14:32:10Z", "service": "api-gateway", "level": "ERROR", "message": "Upstream payment-service connection refused: connect ECONNREFUSED 10.0.1.45:8080"},
+      {"timestamp": "2024-01-15T14:32:05Z", "service": "api-gateway", "level": "WARN", "message": "Circuit breaker OPEN for payment-service after 5 consecutive failures"}
+    ],
+    "database": [
+      {"timestamp": "2024-01-15T14:30:00Z", "service": "database", "level": "INFO", "message": "All queries nominal. Connections: 45/200"}
+    ]
+  },
+  "diagnostic_results": {
+    "heap_dump payment-service": "Heap dump analysis: TransactionCache holds 2,847,293 entries. Cache was initialized with maxSize=-1 (unbounded). Oldest entries date from 72 hours ago – TTL eviction is disabled. Root cause: unbounded in-memory cache growing indefinitely.",
+    "thread_dump payment-service": "12 threads in RUNNABLE state, 4 threads blocked on TransactionCache.put(). GC overhead >90% of CPU time.",
+    "ping payment-service": "Request timeout – pod is in CrashLoopBackOff"
+  },
+  "valid_fixes": {
+    "restart_service": {
+      "service": "payment-service",
+      "description": "Restarts the pod – clears cache temporarily but does not fix root cause",
+      "partial_credit": 0.1,
+      "note": "Service restarted. Cache cleared. Memory usage: 12%. WARNING: Root cause (unbounded cache) not fixed – will OOM again in ~45 minutes."
+    },
+    "patch_cache_config": {
+      "service": "payment-service",
+      "description": "Patches TransactionCache maxSize to 50000 and enables TTL eviction",
+      "partial_credit": 1.0,
+      "note": "Cache configuration patched: maxSize=50000, ttl=3600s. Service redeployed. Memory usage stable at 34%. Root cause resolved."
+    },
+    "increase_memory_limit": {
+      "service": "payment-service",
+      "description": "Increase pod memory limit from 2Gi to 8Gi",
+      "partial_credit": 0.05,
+      "note": "Memory limit increased. This is a workaround, not a fix – the leak continues and will exhaust new limit eventually."
+    }
+  },
+  "grader_criteria": {
+    "target_service": "payment-service",
+    "root_cause_keywords": ["TransactionCache", "unbounded", "maxSize", "OOM", "heap", "cache", "memory leak"],
+    "correct_fix": "patch_cache_config",
+    "needs_escalation": false,
+    "resolution_required": true
+  }
+}

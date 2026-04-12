@@ -1,0 +1,157 @@
+{
+  "task_id": "task2_db_cascade",
+  "difficulty": "medium",
+  "title": "Database Cascade Failure – Slow Query Avalanche",
+  "description": "Multiple services are degraded. Trace the dependency chain, identify the true root cause (not the red herring), and apply the correct remediation.",
+  "max_steps": 20,
+  "initial_alerts": [
+    {
+      "alert_id": "ALT-101",
+      "severity": "critical",
+      "service": "frontend",
+      "message": "frontend: HTTP 503 error rate at 34% – users cannot complete checkout",
+      "timestamp": "2024-02-10T09:15:00Z",
+      "acknowledged": false
+    },
+    {
+      "alert_id": "ALT-102",
+      "severity": "critical",
+      "service": "order-service",
+      "message": "order-service: p99 latency 28,000ms (threshold: 2000ms). Request queue backing up.",
+      "timestamp": "2024-02-10T09:14:30Z",
+      "acknowledged": false
+    },
+    {
+      "alert_id": "ALT-103",
+      "severity": "warning",
+      "service": "order-service",
+      "message": "order-service: CPU at 89% – possible compute saturation",
+      "timestamp": "2024-02-10T09:14:00Z",
+      "acknowledged": false
+    },
+    {
+      "alert_id": "ALT-104",
+      "severity": "warning",
+      "service": "inventory-service",
+      "message": "inventory-service: p99 latency 15,000ms – database calls timing out",
+      "timestamp": "2024-02-10T09:13:45Z",
+      "acknowledged": false
+    }
+  ],
+  "initial_metrics": [
+    {
+      "service": "frontend",
+      "cpu_pct": 40.0,
+      "memory_pct": 55.0,
+      "error_rate": 34.0,
+      "p99_latency_ms": 30000.0,
+      "requests_per_sec": 1200.0
+    },
+    {
+      "service": "order-service",
+      "cpu_pct": 89.0,
+      "memory_pct": 70.0,
+      "error_rate": 22.0,
+      "p99_latency_ms": 28000.0,
+      "requests_per_sec": 450.0
+    },
+    {
+      "service": "inventory-service",
+      "cpu_pct": 35.0,
+      "memory_pct": 60.0,
+      "error_rate": 18.0,
+      "p99_latency_ms": 15000.0,
+      "requests_per_sec": 380.0
+    },
+    {
+      "service": "postgres-primary",
+      "cpu_pct": 97.0,
+      "memory_pct": 88.0,
+      "error_rate": 0.5,
+      "p99_latency_ms": 25000.0,
+      "requests_per_sec": 2400.0
+    },
+    {
+      "service": "user-service",
+      "cpu_pct": 28.0,
+      "memory_pct": 42.0,
+      "error_rate": 1.2,
+      "p99_latency_ms": 200.0,
+      "requests_per_sec": 310.0
+    }
+  ],
+  "log_database": {
+    "frontend": [
+      {"timestamp": "2024-02-10T09:14:55Z", "service": "frontend", "level": "ERROR", "message": "Upstream order-service timeout after 30000ms"},
+      {"timestamp": "2024-02-10T09:14:40Z", "service": "frontend", "level": "ERROR", "message": "Upstream order-service timeout after 30000ms"},
+      {"timestamp": "2024-02-10T09:14:20Z", "service": "frontend", "level": "WARN", "message": "Retry budget exhausted for order-service – returning 503 to user"}
+    ],
+    "order-service": [
+      {"timestamp": "2024-02-10T09:14:50Z", "service": "order-service", "level": "ERROR", "message": "DB query timeout after 25000ms: SELECT * FROM orders JOIN order_items ON ... WHERE customer_id=? [full table scan detected]"},
+      {"timestamp": "2024-02-10T09:14:48Z", "service": "order-service", "level": "ERROR", "message": "DB query timeout after 25000ms: SELECT * FROM orders JOIN order_items ON ..."},
+      {"timestamp": "2024-02-10T09:14:30Z", "service": "order-service", "level": "WARN", "message": "Thread pool saturation: 200/200 threads blocked on DB calls. New requests queuing."},
+      {"timestamp": "2024-02-10T09:14:00Z", "service": "order-service", "level": "INFO", "message": "Deployment v2.4.1 → v2.4.2 completed 18 minutes ago"}
+    ],
+    "inventory-service": [
+      {"timestamp": "2024-02-10T09:14:45Z", "service": "inventory-service", "level": "ERROR", "message": "postgres query timeout: SELECT stock_level FROM inventory WHERE sku IN (?,?,?,...) [1000 items]"},
+      {"timestamp": "2024-02-10T09:14:30Z", "service": "inventory-service", "level": "WARN", "message": "Connection pool exhausted: all 50 connections waiting on postgres-primary"}
+    ],
+    "postgres-primary": [
+      {"timestamp": "2024-02-10T09:14:55Z", "service": "postgres-primary", "level": "WARN", "message": "pg_stat_activity: 847 active connections (max_connections=1000). Lock contention detected."},
+      {"timestamp": "2024-02-10T09:14:50Z", "service": "postgres-primary", "level": "ERROR", "message": "Slow query detected (24.8s): SELECT o.*, oi.* FROM orders o JOIN order_items oi ON o.id=oi.order_id WHERE o.customer_id=$1 — Seq Scan on orders (cost=0.00..892847.00 rows=2847293)"},
+      {"timestamp": "2024-02-10T09:14:45Z", "service": "postgres-primary", "level": "ERROR", "message": "Slow query detected (23.1s): SELECT o.*, oi.* FROM orders o JOIN order_items oi ON o.id=oi.order_id WHERE o.customer_id=$1 — Seq Scan on orders"},
+      {"timestamp": "2024-02-10T09:13:50Z", "service": "postgres-primary", "level": "WARN", "message": "Index orders_customer_id_idx: INVALID (migration in progress or failed). Falling back to Seq Scan."},
+      {"timestamp": "2024-02-10T09:12:00Z", "service": "postgres-primary", "level": "INFO", "message": "Running migration 20240210_add_customer_index: CREATE INDEX CONCURRENTLY orders_customer_id_idx ON orders(customer_id)"}
+    ],
+    "user-service": [
+      {"timestamp": "2024-02-10T09:14:00Z", "service": "user-service", "level": "INFO", "message": "All systems nominal"}
+    ]
+  },
+  "diagnostic_results": {
+    "explain_query postgres-primary": "EXPLAIN output: Seq Scan on orders (cost=0.00..892847.00 rows=2847293 width=284). Index orders_customer_id_idx exists but is INVALID – created CONCURRENTLY and failed at 67% due to a conflicting lock. All queries falling back to sequential scan of 2.8M row table.",
+    "check_migrations postgres-primary": "Migration status: 20240210_add_customer_index – FAILED (lock timeout at step 3/4). Index left in INVALID state. Fix: DROP INDEX orders_customer_id_idx; then re-run migration during low-traffic window, OR: REINDEX INDEX CONCURRENTLY orders_customer_id_idx",
+    "heap_dump order-service": "200 threads blocked in com.orders.db.OrderRepository.findByCustomerId() waiting for DB response. CPU spike is from thread contention + GC pressure, not a compute issue.",
+    "ping order-service": "order-service pod is running but all threads blocked on DB calls"
+  },
+  "valid_fixes": {
+    "restart_order_service": {
+      "service": "order-service",
+      "description": "Restart order-service pods",
+      "partial_credit": 0.05,
+      "note": "order-service restarted. New pods immediately hit same slow queries. No improvement. Root cause is in postgres-primary."
+    },
+    "reindex_invalid_index": {
+      "service": "postgres-primary",
+      "description": "REINDEX CONCURRENTLY the invalid customer index on orders table",
+      "partial_credit": 1.0,
+      "note": "REINDEX CONCURRENTLY completed in 4m12s. Index orders_customer_id_idx is now VALID. Query times: 24,800ms → 8ms. All downstream services recovering. p99 latency normalizing."
+    },
+    "drop_invalid_index": {
+      "service": "postgres-primary",
+      "description": "DROP the invalid index to stop seq scans (temporary fix, loses index benefit)",
+      "partial_credit": 0.6,
+      "note": "Invalid index dropped. Queries now complete in ~180ms (no index benefit but no INVALID index overhead). Services recovering. Recommend scheduling reindex during maintenance window."
+    },
+    "scale_order_service": {
+      "service": "order-service",
+      "description": "Scale order-service from 3 to 10 replicas",
+      "partial_credit": 0.05,
+      "note": "Scaled to 10 replicas. All new pods also blocked on DB. DB connection count now 3000/1000 – connection pool exhausted. Things are worse."
+    },
+    "increase_db_connections": {
+      "service": "postgres-primary",
+      "description": "Increase max_connections from 1000 to 5000",
+      "partial_credit": 0.05,
+      "note": "max_connections increased. More connections established but all stuck on slow queries. Root cause unchanged."
+    }
+  },
+  "grader_criteria": {
+    "target_service": "postgres-primary",
+    "root_cause_keywords": ["INVALID", "index", "orders_customer_id_idx", "migration", "Seq Scan", "sequential scan", "slow query"],
+    "correct_fix": "reindex_invalid_index",
+    "acceptable_fix": "drop_invalid_index",
+    "red_herring": "order-service CPU spike is caused by thread contention waiting on DB, not a compute issue",
+    "needs_escalation": false,
+    "resolution_required": true
+  }
+}
