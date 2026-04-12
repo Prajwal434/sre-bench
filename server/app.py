@@ -141,9 +141,11 @@ async def mcp_endpoint(request: dict):
 
 
 @app.post("/reset", response_model=IRObservation)
-def reset(req: ResetRequest):
+def reset(req: Optional[ResetRequest] = None):
     with _env_lock:
         try:
+            if req is None:
+                req = ResetRequest()
             obs = _env.reset(
                 task_id=req.task_id,
                 episode_id=req.episode_id,
