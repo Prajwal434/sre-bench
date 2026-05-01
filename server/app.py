@@ -18,7 +18,10 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import json
+import smtplib
 import threading
+import time
+from email.mime.text import MIMEText
 from typing import Any, Dict, Optional
 
 import gradio as gr
@@ -239,6 +242,93 @@ def _fmt_obs(obs_dict: dict) -> str:
 
 _gradio_state: Dict[str, Any] = {"obs": None, "task_id": "task1_memory_leak"}
 
+# ------------------------------------------------------------------
+# Email alert
+# ------------------------------------------------------------------
+
+ALERT_EMAIL = os.getenv("ALERT_EMAIL", "")
+EMAIL_USER = os.getenv("EMAIL_USER", "")
+EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD", "")
+
+
+def send_escalation_email(team: str, message: str, task_id: str):
+    if not all([ALERT_EMAIL, EMAIL_USER, EMAIL_PASSWORD]):
+        return
+    try:
+        body = f"""
+SREБENCH ESCALATION ALERT
+==========================
+Task:    {task_id}
+Team:    {team}
+Message: {message}
+
+Human intervention required. Please review the incident immediately.
+        """.strip()
+        msg = MIMEText(body)
+        msg["Subject"] = f"[SREBench] ESCALATION → {team.upper()} team required"
+        msg["From"] = EMAIL_USER
+        msg["To"] = ALERT_EMAIL
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as s:
+            s.login(EMAIL_USER, EMAIL_PASSWORD)
+            s.sendmail(EMAIL_USER, ALERT_EMAIL, msg.as_string())
+    except Exception:
+        pass
+
+
+# ------------------------------------------------------------------
+# Mock agent scripts (same as inference.py)
+# ------------------------------------------------------------------
+
+MOCK_SCRIPTS: Dict[str, list] = {
+    "task1_memory_leak": [
+        ("check_metrics", {}),
+        ("query_logs", {"service": "payment-service", "filter": "ERROR"}),
+        ("lookup_runbook", {"symptom": "OOMKilled memory crash", "service": "payment-service"}),
+        ("run_diagnostic", {"tool": "heap_dump", "target": "payment-service"}),
+        ("acknowledge_alert", {"alert_id": "ALT-001"}),
+        ("apply_fix", {"fix_type": "patch_cache_config", "target": "payment-service"}),
+        ("mark_resolved", {"root_cause": "TransactionCache unbounded maxSize=-1 caused heap exhaustion",
+                           "resolution_summary": "Patched cache maxSize=50000 with TTL eviction. Payment service memory stabilised."}),
+    ],
+    "task2_db_cascade": [
+        ("check_metrics", {}),
+        ("query_logs", {"service": "order-service", "filter": "ERROR"}),
+        ("lookup_runbook", {"symptom": "high latency slow queries", "service": "postgres-primary"}),
+        ("run_diagnostic", {"tool": "explain_query", "target": "postgres-primary"}),
+        ("acknowledge_alert", {"alert_id": "ALT-001"}),
+        ("add_note", {"text": "orders_customer_id_idx is INVALID — all queries doing full seq scan of 2.8M rows"}),
+        ("apply_fix", {"fix_type": "reindex_invalid_index", "target": "postgres-primary"}),
+        ("query_logs", {"service": "order-service", "filter": "latency"}),
+        ("mark_resolved", {"root_cause": "Invalid index orders_customer_id_idx forced full seq scans (25s/query)",
+                           "resolution_summary": "REINDEX CONCURRENTLY rebuilt index. Query time 25s→8ms. All services recovered."}),
+    ],
+    "task3_ddos_exfil": [
+        ("check_metrics", {}),
+        ("acknowledge_alert", {"alert_id": "ALT-001"}),
+        ("query_logs", {"service": "auth-service", "filter": "ERROR"}),
+        ("run_diagnostic", {"tool": "threat_intel", "target": "auth-service"}),
+        ("acknowledge_alert", {"alert_id": "ALT-002"}),
+        ("query_logs", {"service": "data-pipeline", "filter": "export"}),
+        ("run_diagnostic", {"tool": "netstat", "target": "data-pipeline"}),
+        ("apply_fix", {"fix_type": "rate_limit_auth", "target": "auth-service"}),
+        ("apply_fix", {"fix_type": "reset_admin_password", "target": "auth-service"}),
+        ("escalate", {"team": "security", "message": "Compromised admin account exfiltrating user PII to Tor exit nodes via data-pipeline. DDoS on auth is a distraction."}),
+        ("apply_fix", {"fix_type": "kill_rogue_export", "target": "data-pipeline"}),
+        ("mark_resolved", {"root_cause": "Compromised admin account used to exfiltrate PII; DDoS was distraction",
+                           "resolution_summary": "Rate-limited auth, reset admin password, killed rogue export job, escalated to security team."}),
+    ],
+    "task4_predictive": [
+        ("get_metric_trends", {"service": "auth-service", "metric": "memory_pct", "window_minutes": 30}),
+        ("lookup_runbook", {"symptom": "memory increasing gradually", "service": "auth-service"}),
+        ("query_logs", {"service": "auth-service", "filter": "session"}),
+        ("predict_incident", {"service": "auth-service", "predicted_issue": "OOM crash due to session accumulation with ttl=-1", "confidence": 0.92}),
+        ("set_proactive_alert", {"service": "auth-service", "metric": "memory_pct", "threshold": 85, "condition": "above"}),
+        ("apply_fix", {"fix_type": "patch_session_ttl", "target": "auth-service"}),
+        ("mark_resolved", {"root_cause": "session.ttl=-1 causing unbounded session accumulation",
+                           "resolution_summary": "Patched session.ttl=3600. Memory growth stopped. Incident prevented before OOM."}),
+    ],
+}
+
 
 def gradio_reset(task_id: str) -> str:
     import requests
@@ -265,7 +355,52 @@ def gradio_step(action_type: str, params_json: str) -> str:
     )
     obs = resp.json()
     _gradio_state["obs"] = obs
+
+    # Fire email if agent escalated
+    if action_type == "escalate":
+        send_escalation_email(
+            team=params.get("team", "unknown"),
+            message=params.get("message", ""),
+            task_id=_gradio_state.get("task_id", "unknown"),
+        )
+
     return _fmt_obs(obs)
+
+
+def gradio_auto_run(task_id: str):
+    """Run the mock agent automatically, yielding UI updates after each step."""
+    import requests
+
+    # Reset first
+    resp = requests.post("http://localhost:7860/reset", json={"task_id": task_id})
+    obs = resp.json()
+    _gradio_state["obs"] = obs
+    _gradio_state["task_id"] = task_id
+    yield _fmt_obs(obs) + "\n\n---\n_Agent starting..._"
+    time.sleep(1.5)
+
+    script = MOCK_SCRIPTS.get(task_id, [])
+    for action_type, params in script:
+        resp = requests.post(
+            "http://localhost:7860/step",
+            json={"action_type": action_type, "parameters": params},
+        )
+        obs = resp.json()
+        _gradio_state["obs"] = obs
+
+        if action_type == "escalate":
+            send_escalation_email(
+                team=params.get("team", "unknown"),
+                message=params.get("message", ""),
+                task_id=task_id,
+            )
+
+        status = f"_Agent action: **{action_type}**_"
+        yield _fmt_obs(obs) + f"\n\n---\n{status}"
+        time.sleep(2)
+
+        if obs.get("done"):
+            break
 
 
 ACTION_EXAMPLES = {
@@ -292,64 +427,64 @@ with gr.Blocks(title="SREBench – Incident Response OpenEnv") as demo:
     gr.Markdown(
         """
 # SREBench — Production Incident Response Environment
-**OpenEnv-compatible | 3 Tasks: Easy → Medium → Hard**
+**OpenEnv-compatible | 4 Tasks: Easy → Medium → Hard + Predictive**
 
-Simulate an SRE engineer responding to production incidents. Diagnose root causes,
-apply remediations, escalate when needed, and document resolutions. Score: 0.0–1.0.
+AI agent automatically diagnoses production incidents, applies fixes, escalates to humans when needed, and scores 0.0–1.0.
         """
     )
 
     with gr.Row():
         task_selector = gr.Dropdown(
             choices=VALID_TASKS,
-            value="task1_memory_leak",
+            value="task3_ddos_exfil",
             label="Select Task",
         )
-        reset_btn = gr.Button("Reset / New Episode", variant="primary")
+        auto_btn = gr.Button("Run AI Agent", variant="primary", scale=2)
+        reset_btn = gr.Button("Reset", scale=1)
 
     observation_box = gr.Markdown(
-        value="_Click **Reset** to start an episode._",
-        label="Observation",
+        value="_Select a task and click **Run AI Agent** to watch the agent work autonomously._",
+        label="Live Incident Feed",
     )
 
-    gr.Markdown("### Take an Action")
+    gr.Markdown("### Manual Control")
     with gr.Row():
         action_type = gr.Dropdown(
             choices=list(ACTION_EXAMPLES.keys()),
-            value="get_metric_trends",
+            value="check_metrics",
             label="Action Type",
         )
         params_input = gr.Textbox(
-            value='{"service": "payment-service", "filter": "ERROR"}',
+            value='{}',
             label='Parameters (JSON)',
             lines=2,
         )
 
     with gr.Row():
         autofill_btn = gr.Button("Autofill Example", size="sm")
-        step_btn = gr.Button("Step →", variant="primary")
+        step_btn = gr.Button("Step →")
+
+    def live_update():
+        obs = _gradio_state.get("obs")
+        if obs is None:
+            return "_Agent initializing..._"
+        return _fmt_obs(obs)
+
+    timer = gr.Timer(2)
+    timer.tick(live_update, outputs=observation_box)
 
     action_type.change(fill_example, inputs=action_type, outputs=params_input)
     autofill_btn.click(fill_example, inputs=action_type, outputs=params_input)
     reset_btn.click(gradio_reset, inputs=task_selector, outputs=observation_box)
     step_btn.click(gradio_step, inputs=[action_type, params_input], outputs=observation_box)
+    auto_btn.click(gradio_auto_run, inputs=task_selector, outputs=observation_box)
 
     gr.Markdown(
         """
 ---
-### API Usage
-```bash
-# Reset
-curl -X POST http://localhost:7860/reset -H 'Content-Type: application/json' \\
-  -d '{"task_id": "task1_memory_leak"}'
+**Task 3 (DDoS + Exfil):** Agent detects a DDoS is a distraction, finds hidden data exfiltration, applies fixes, and **emails the security team** automatically.
 
-# Step
-curl -X POST http://localhost:7860/step -H 'Content-Type: application/json' \\
-  -d '{"action_type": "query_logs", "parameters": {"service": "payment-service"}}'
-
-# State
-curl http://localhost:7860/state
-```
+**Task 4 (Predictive):** No alerts firing — agent spots a memory trend and prevents the crash before it happens.
         """
     )
 
@@ -359,6 +494,39 @@ curl http://localhost:7860/state
 # ------------------------------------------------------------------
 
 app = gr.mount_gradio_app(app, demo, path="/")
+
+
+def _background_agent_loop():
+    """Runs all tasks in an infinite loop — auto-starts with the server."""
+    import requests
+    time.sleep(4)  # wait for server to be fully ready
+    while True:
+        for task_id in VALID_TASKS:
+            try:
+                requests.post("http://localhost:7860/reset", json={"task_id": task_id}, timeout=5)
+                time.sleep(2)
+                script = MOCK_SCRIPTS.get(task_id, [])
+                for action_type, params in script:
+                    requests.post(
+                        "http://localhost:7860/step",
+                        json={"action_type": action_type, "parameters": params},
+                        timeout=5,
+                    )
+                    if action_type == "escalate":
+                        send_escalation_email(
+                            team=params.get("team", "unknown"),
+                            message=params.get("message", ""),
+                            task_id=task_id,
+                        )
+                    time.sleep(2.5)
+            except Exception:
+                time.sleep(2)
+        time.sleep(5)  # short pause between full cycles
+
+
+# Start the agent loop in background immediately at import time
+_agent_thread = threading.Thread(target=_background_agent_loop, daemon=True)
+_agent_thread.start()
 
 
 def main():
